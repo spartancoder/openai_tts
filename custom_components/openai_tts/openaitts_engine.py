@@ -1,6 +1,7 @@
 """
 TTS Engine for OpenAI TTS with optional streaming support.
 """
+
 import json
 import logging
 import time
@@ -65,7 +66,8 @@ class OpenAITTSEngine:
         instructions: str | None = None,
         extra_payload: str | None = None,
         stream: bool = False,
-        on_first_chunk: Optional[Callable[[], None]] = None
+        on_first_chunk: Optional[Callable[[], None]] = None,
+        response_format: str = "mp3",
     ) -> Union[AudioResponse, StreamingAudioResponse]:
         """TTS request with optional streaming support.
 
@@ -77,6 +79,7 @@ class OpenAITTSEngine:
             extra_payload: JSON string with extra parameters to merge into the request
             stream: If True, returns StreamingAudioResponse for lower latency
             on_first_chunk: Callback when first chunk is received (streaming only)
+            response_format: Audio format (mp3, flac, wav, opus, aac, pcm)
         """
         if speed is None:
             speed = self._speed
@@ -96,7 +99,7 @@ class OpenAITTSEngine:
             "model": model,
             "input": text,
             "voice": voice,
-            "response_format": "mp3",
+            "response_format": response_format,
             "speed": speed,
         }
         # Include instructions if provided
@@ -116,7 +119,20 @@ class OpenAITTSEngine:
         # Debug logging for payload
         _LOGGER.debug("TTS API payload: model=%s, voice=%s, speed=%s, instructions=%s, extra_keys=%s",
                      model, voice, speed, instructions,
-                     [k for k in payload.keys() if k not in ("model", "input", "voice", "response_format", "speed", "instructions")])
+            [
+                k
+                for k in payload.keys()
+                if k
+                not in (
+                    "model",
+                    "input",
+                    "voice",
+                    "response_format",
+                    "speed",
+                    "instructions",
+                )
+            ],
+        )
 
         max_retries = 1
         attempt = 0

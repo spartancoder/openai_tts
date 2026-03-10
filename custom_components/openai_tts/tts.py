@@ -1,6 +1,7 @@
 """
 Setting up TTS entity with custom caching.
 """
+
 from __future__ import annotations
 import logging
 import asyncio
@@ -40,6 +41,7 @@ from .const import (
     MESSAGE_DURATIONS_KEY,
     CONF_PROFILE_NAME,
     SUPPORTED_LANGUAGES,
+    CONF_OUTPUT_FORMAT,
 )
 
 SUBENTRY_TYPE_PROFILE = "profile"
@@ -53,50 +55,67 @@ _LOGGER = logging.getLogger(__name__)
 DURATION_METADATA_KEY = "tts_duration_ms"
 
 
-def embed_duration_in_audio(audio_data: bytes, duration_ms: int) -> bytes:
-    """Embed duration metadata in MP3 audio using mutagen.
+def embed_duration_in_audio(
+    audio_data: bytes, duration_ms: int, audio_format: str = "mp3"
+) -> bytes:
+    """Embed duration metadata in audio using mutagen.
 
-    This stores the duration in ID3 TXXX (user-defined text) frame,
-    allowing it to be read back from HA's cached audio files.
+    For MP3: stores in ID3 TXXX frame.
+    For FLAC: stores in Vorbis comments.
+    For WAV: returns unchanged (WAV doesn't support metadata well).
     """
     import tempfile
 
+    if audio_format == "wav":
+        return audio_data
+
     try:
-        from mutagen.mp3 import MP3
-        from mutagen.id3 import TXXX
+        if audio_format == "mp3":
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import TXXX
+        elif audio_format == "flac":
+            from mutagen.flac import FLAC
     except ImportError:
         _LOGGER.warning("mutagen not available, skipping metadata embedding")
         return audio_data
 
-    # Write audio to temp file
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=f".{audio_format}", delete=False) as f:
         f.write(audio_data)
         tmp_path = f.name
 
     try:
-        # Open and add ID3 tags
-        try:
-            audio = MP3(tmp_path)
-        except Exception as e:
-            _LOGGER.debug("Failed to open MP3 for metadata: %s", e)
-            return audio_data
-
-        if audio.tags is None:
+        if audio_format == "mp3":
             try:
-                audio.add_tags()
-            except Exception:
-                # Tags might already exist in a different format
-                pass
+                audio = MP3(tmp_path)
+            except Exception as e:
+                _LOGGER.debug("Failed to open MP3 for metadata: %s", e)
+                return audio_data
 
-        if audio.tags is not None:
-            # Remove existing duration tag if present
-            audio.tags.delall(f"TXXX:{DURATION_METADATA_KEY}")
-            # Add new duration tag
-            audio.tags.add(TXXX(encoding=3, desc=DURATION_METADATA_KEY, text=str(duration_ms)))
+            if audio.tags is None:
+                try:
+                    audio.add_tags()
+                except Exception:
+                    pass
+
+            if audio.tags is not None:
+                audio.tags.delall(f"TXXX:{DURATION_METADATA_KEY}")
+                audio.tags.add(
+                    TXXX(encoding=3, desc=DURATION_METADATA_KEY, text=str(duration_ms))
+                )
+                audio.save()
+                _LOGGER.debug("Embedded duration %d ms in MP3 metadata", duration_ms)
+
+        elif audio_format == "flac":
+            try:
+                audio = FLAC(tmp_path)
+            except Exception as e:
+                _LOGGER.debug("Failed to open FLAC for metadata: %s", e)
+                return audio_data
+
+            audio[DURATION_METADATA_KEY] = str(duration_ms)
             audio.save()
-            _LOGGER.debug("Embedded duration %d ms in audio metadata", duration_ms)
+            _LOGGER.debug("Embedded duration %d ms in FLAC metadata", duration_ms)
 
-        # Read back the modified file
         with open(tmp_path, "rb") as f:
             return f.read()
 
@@ -110,35 +129,53 @@ def embed_duration_in_audio(audio_data: bytes, duration_ms: int) -> bytes:
             pass
 
 
-def read_duration_from_audio(audio_data: bytes) -> int | None:
-    """Read duration metadata from MP3 audio using mutagen.
+def read_duration_from_audio(
+    audio_data: bytes, audio_format: str = "mp3"
+) -> int | None:
+    """Read duration metadata from audio using mutagen.
 
     Returns duration in milliseconds, or None if not found.
     """
     import tempfile
 
     try:
-        from mutagen.mp3 import MP3
-        from mutagen.id3 import TXXX
+        if audio_format == "mp3":
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import TXXX
+        elif audio_format == "flac":
+            from mutagen.flac import FLAC
+        else:
+            return None
     except ImportError:
         return None
 
-    # Write audio to temp file
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=f".{audio_format}", delete=False) as f:
         f.write(audio_data)
         tmp_path = f.name
 
     try:
-        audio = MP3(tmp_path)
-        if audio.tags is None:
-            return None
+        if audio_format == "mp3":
+            audio = MP3(tmp_path)
+            if audio.tags is None:
+                return None
 
-        # Look for our custom TXXX frame
-        for tag in audio.tags.values():
-            if isinstance(tag, TXXX) and tag.desc == DURATION_METADATA_KEY:
+            for tag in audio.tags.values():
+                if isinstance(tag, TXXX) and tag.desc == DURATION_METADATA_KEY:
+                    try:
+                        duration_ms = int(tag.text[0])
+                        _LOGGER.debug(
+                            "Read duration %d ms from MP3 metadata", duration_ms
+                        )
+                        return duration_ms
+                    except (ValueError, IndexError):
+                        pass
+
+        elif audio_format == "flac":
+            audio = FLAC(tmp_path)
+            if DURATION_METADATA_KEY in audio:
                 try:
-                    duration_ms = int(tag.text[0])
-                    _LOGGER.debug("Read duration %d ms from audio metadata", duration_ms)
+                    duration_ms = int(audio[DURATION_METADATA_KEY][0])
+                    _LOGGER.debug("Read duration %d ms from FLAC metadata", duration_ms)
                     return duration_ms
                 except (ValueError, IndexError):
                     pass
@@ -345,12 +382,15 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
         _LOGGER.debug("TTS entity initialized with ID: %s", self.entity_id)
         _LOGGER.info("OpenAI TTS entity created: %s (engine speed: %s)", self.entity_id, self._engine._speed)
 
-    async def _get_audio_duration(self, audio_data: bytes) -> int:
+    async def _get_audio_duration(
+        self, audio_data: bytes, audio_format: str = "mp3"
+    ) -> int:
         """Get duration of audio data in milliseconds."""
         import tempfile
-        
-        # Create a temporary file to calculate duration
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{audio_format}", delete=False
+        ) as tmp_file:
             tmp_file.write(audio_data)
             tmp_path = tmp_file.name
         
@@ -460,6 +500,7 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
             CONF_NORMALIZE_AUDIO,
             CONF_INSTRUCTIONS,
             CONF_EXTRA_PAYLOAD,
+            CONF_OUTPUT_FORMAT,
         ]
 
     @property
@@ -476,6 +517,7 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
             CONF_CHIME_ENABLE: self._get_config_value(CONF_CHIME_ENABLE, False),
             CONF_CHIME_SOUND: self._get_config_value(CONF_CHIME_SOUND, "threetone.mp3"),
             CONF_NORMALIZE_AUDIO: self._get_config_value(CONF_NORMALIZE_AUDIO, False),
+            CONF_OUTPUT_FORMAT: self._get_config_value(CONF_OUTPUT_FORMAT, "mp3"),
         }
 
     @property
@@ -697,12 +739,18 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
             # Handle extra_payload for custom backends (service call overrides config)
             extra_payload = options.get(CONF_EXTRA_PAYLOAD) or self._get_config_value(CONF_EXTRA_PAYLOAD)
 
+            # Get output format
+            output_format = (
+                options.get(CONF_OUTPUT_FORMAT)
+                or self._get_config_value(CONF_OUTPUT_FORMAT)
+                or "mp3"
+            )
+
             # Step 3: Determine if we can use streaming
             can_stream = self._can_use_streaming(full_text, options)
 
-            # Choose audio format - using mp3 for now as opus might have compatibility issues
-            # TODO: Re-enable opus once streaming is working properly
-            audio_format = "mp3"  # Was: "opus" if can_stream else "mp3"
+            # Use the configured output format
+            audio_format = output_format
 
             _LOGGER.info("Streaming TTS - voice: %s, model: %s, speed: %s, format: %s, streaming: %s",
                         voice, model, speed, audio_format, can_stream)
@@ -736,7 +784,9 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                             _LOGGER.info("Streaming completed, %d bytes total", total_bytes)
 
                             # Calculate duration from the complete audio
-                            duration_ms = await self._get_audio_duration(complete_audio)
+                            duration_ms = await self._get_audio_duration(
+                                complete_audio, audio_format
+                            )
                             self._last_duration_ms = duration_ms
                             _LOGGER.info("Calculated streaming audio duration: %d ms", duration_ms)
 
@@ -764,11 +814,21 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
 
                         # Get processed audio using the existing method
                         audio_data = await self._get_processed_audio_for_streaming(
-                            full_text, request.language, options, voice, model, speed, instructions, extra_payload
+                            full_text,
+                            request.language,
+                            options,
+                            voice,
+                            model,
+                            speed,
+                            instructions,
+                            extra_payload,
+                            audio_format,
                         )
 
                         # Calculate and store duration for non-streaming audio
-                        duration_ms = await self._get_audio_duration(audio_data)
+                        duration_ms = await self._get_audio_duration(
+                            audio_data, audio_format
+                        )
                         self._last_duration_ms = duration_ms
                         _LOGGER.info("Calculated non-streaming audio duration: %d ms", duration_ms)
 
@@ -780,7 +840,10 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
 
                         # Embed duration in audio metadata for HA cache
                         audio_data = await self.hass.async_add_executor_job(
-                            embed_duration_in_audio, audio_data, duration_ms
+                            embed_duration_in_audio,
+                            audio_data,
+                            duration_ms,
+                            audio_format,
                         )
 
                         # Yield in chunks for consistency
@@ -801,10 +864,7 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                     raise
 
             # Return the streaming response
-            return TTSAudioResponse(
-                extension=audio_format,
-                data_gen=audio_generator()
-            )
+            return TTSAudioResponse(extension=audio_format, data_gen=audio_generator())
 
         except Exception as e:
             _LOGGER.error("Error in async_stream_tts_audio: %s", e, exc_info=True)
@@ -821,7 +881,8 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
         model: str,
         speed: float,
         instructions: str | None,
-        extra_payload: str | None = None
+        extra_payload: str | None = None,
+        output_format: str = "mp3",
     ) -> bytes:
         """Get processed audio for non-streaming cases.
 
@@ -845,8 +906,9 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                 model=model,
                 instructions=instructions,
                 extra_payload=extra_payload,
-                stream=False  # Don't use streaming for processed audio
-            )
+                stream=False,
+                response_format=output_format,
+            ),
         )
 
         # Set a timeout for the TTS generation
@@ -862,12 +924,18 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
 
         audio_data = audio_response.content
 
-        # Check if audio is WAV (some custom TTS backends return WAV instead of MP3)
-        is_wav = detect_audio_format(audio_data) == "wav"
+        # Check input audio format
+        input_format = detect_audio_format(audio_data)
 
-        # Process audio if needed (chime, normalization, or WAV conversion)
-        if chime_enable or normalize_audio or is_wav:
-            _LOGGER.debug("Processing audio with chime=%s, normalize=%s, is_wav=%s", chime_enable, normalize_audio, is_wav)
+        # Process audio if needed (chime, normalization, or format conversion)
+        if chime_enable or normalize_audio or input_format != output_format:
+            _LOGGER.debug(
+                "Processing audio with chime=%s, normalize=%s, input_format=%s, output_format=%s",
+                chime_enable,
+                normalize_audio,
+                input_format,
+                output_format,
+            )
 
             # Get chime file path
             chime_path = None
@@ -884,7 +952,8 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                 audio_data,
                 chime_enabled=chime_enable,
                 chime_path=chime_path,
-                normalize_audio=normalize_audio
+                normalize_audio=normalize_audio,
+                output_format=output_format,
             )
 
             if processed_audio:
@@ -947,7 +1016,13 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
         chime_enable = options.get(CONF_CHIME_ENABLE) or self._get_config_value(CONF_CHIME_ENABLE) or False
         chime_sound = options.get(CONF_CHIME_SOUND) or self._get_config_value(CONF_CHIME_SOUND)
         normalize_audio = options.get(CONF_NORMALIZE_AUDIO) or self._get_config_value(CONF_NORMALIZE_AUDIO) or False
-        
+
+        output_format = (
+            options.get(CONF_OUTPUT_FORMAT)
+            or self._get_config_value(CONF_OUTPUT_FORMAT)
+            or "mp3"
+        )
+
         # Note: HA handles caching - we just need to ensure metadata is embedded
         
         _LOGGER.info("TTS request - voice: %s, model: %s, speed: %s, instructions: %s, chime_enable: %s",
@@ -973,11 +1048,12 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                     message,
                     speed=speed,
                     voice=voice,
-                    model=model,  # Pass model parameter
+                    model=model,
                     instructions=instructions,
                     extra_payload=extra_payload,
-                    stream=can_stream
-                )
+                    stream=can_stream,
+                    response_format=output_format,
+                ),
             )
             
             # Set a timeout for the TTS generation
@@ -1004,7 +1080,9 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                 audio_data = audio_response.content
             
             # Calculate duration before any processing
-            total_duration_ms = await self._get_audio_duration(audio_data)
+            total_duration_ms = await self._get_audio_duration(
+                audio_data, output_format
+            )
             _LOGGER.debug("Generated audio duration: %d ms", total_duration_ms)
 
             # Store duration in instance and shared cache
@@ -1015,13 +1093,19 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
             # Save state to persistent storage
             await self._save_persisted_state()
 
-            # Check if audio is WAV (some custom TTS backends return WAV instead of MP3)
-            is_wav = detect_audio_format(audio_data) == "wav"
+            # Check if audio format differs from requested output format
+            input_format = detect_audio_format(audio_data)
 
-            # Process audio if needed (chime, normalization, or WAV conversion)
-            if chime_enable or normalize_audio or is_wav:
-                _LOGGER.debug("Processing audio with chime=%s, normalize=%s, is_wav=%s", chime_enable, normalize_audio, is_wav)
-                
+            # Process audio if needed (chime, normalization, or format conversion)
+            if chime_enable or normalize_audio or input_format != output_format:
+                _LOGGER.debug(
+                    "Processing audio with chime=%s, normalize=%s, input_format=%s, output_format=%s",
+                    chime_enable,
+                    normalize_audio,
+                    input_format,
+                    output_format,
+                )
+
                 # Get chime file path
                 chime_path = None
                 if chime_enable and chime_sound:
@@ -1037,13 +1121,16 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                     audio_data,
                     chime_enabled=chime_enable,
                     chime_path=chime_path,
-                    normalize_audio=normalize_audio
+                    normalize_audio=normalize_audio,
+                    output_format=output_format,
                 )
                 
                 if processed_audio:
                     audio_data = processed_audio
                     # Recalculate duration after processing and update cache
-                    total_duration_ms = await self._get_audio_duration(audio_data)
+                    total_duration_ms = await self._get_audio_duration(
+                        audio_data, output_format
+                    )
                     self._last_duration_ms = total_duration_ms
                     self._store_message_duration(message, total_duration_ms)
                     self.async_write_ha_state()
@@ -1052,18 +1139,18 @@ class OpenAITTSEntity(TextToSpeechEntity, RestoreEntity):
                 else:
                     _LOGGER.warning("Audio processing failed, using original audio")
 
-            # Embed duration in MP3 metadata using mutagen (for HA cache retrieval)
+            # Embed duration in audio metadata using mutagen (for HA cache retrieval)
             # This allows reading duration from cached audio files
             audio_with_metadata = await self.hass.async_add_executor_job(
-                embed_duration_in_audio, audio_data, total_duration_ms
+                embed_duration_in_audio, audio_data, total_duration_ms, output_format
             )
 
             # Clear engine active flag before returning
             self._engine_active = False
             self.async_write_ha_state()
 
-            return ("mp3", audio_with_metadata)
-            
+            return (output_format, audio_with_metadata)
+
         except MaxLengthExceeded as err:
             _LOGGER.error("Maximum message length exceeded: %s", err)
             self._engine_active = False

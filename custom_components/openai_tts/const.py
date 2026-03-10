@@ -79,6 +79,9 @@ CONF_NORMALIZE_AUDIO = "normalize_audio"
 CONF_INSTRUCTIONS = "instructions"
 CONF_EXTRA_PAYLOAD = "extra_payload"  # JSON string for custom TTS backend parameters
 
+CONF_OUTPUT_FORMAT = "output_format"
+OUTPUT_FORMATS = ["mp3", "flac", "wav"]
+
 # Toggle to snapshot & restore volumes
 CONF_VOLUME_RESTORE = "volume_restore"
 

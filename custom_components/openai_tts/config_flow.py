@@ -43,6 +43,8 @@ from .const import (
     CONF_VOLUME_RESTORE,
     CONF_PAUSE_PLAYBACK,
     CONF_PROFILE_NAME,
+    CONF_OUTPUT_FORMAT,
+    OUTPUT_FORMATS,
 )
 
 SUBENTRY_TYPE_PROFILE = "profile"
@@ -424,6 +426,7 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
                     "normalize_audio": CONF_NORMALIZE_AUDIO,
                     "instructions": CONF_INSTRUCTIONS,
                     "extra_payload": CONF_EXTRA_PAYLOAD,
+                    "output_format": CONF_OUTPUT_FORMAT,
                 }
 
                 for key, value in user_input.items():
@@ -490,6 +493,13 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
                 "select": {"options": chime_opts}
             }),
             vol.Optional("normalize_audio", default=False): selector({"boolean": {}}),
+            vol.Optional("output_format", default="mp3"): selector({
+                "select": {
+                    "options": OUTPUT_FORMATS,
+                    "mode": "dropdown",
+                    "sort": True,
+                }
+            }),
             vol.Optional(
                 "extra_payload",
                 description={
@@ -531,6 +541,7 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
                     "normalize_audio": CONF_NORMALIZE_AUDIO,
                     "instructions": CONF_INSTRUCTIONS,
                     "extra_payload": CONF_EXTRA_PAYLOAD,
+                    "output_format": CONF_OUTPUT_FORMAT,
                 }
 
                 mapped_input = {}
@@ -598,11 +609,20 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
             vol.Optional(CONF_SPEED, default=existing_data.get(CONF_SPEED, 1.0)): selector({
                 "number": {"min": 0.25, "max": 4.0, "step": 0.05, "mode": "slider"}
             }),
-            vol.Optional("chime", default=existing_data.get(CONF_CHIME_ENABLE, False)): selector({"boolean": {}}),
+                vol.Optional("chime", default=existing_data.get(CONF_CHIME_ENABLE, False)): selector({"boolean": {}}),
             vol.Optional("chime_sound", default=existing_data.get(CONF_CHIME_SOUND, "threetone.mp3")): selector({
                 "select": {"options": chime_opts}
             }),
             vol.Optional("normalize_audio", default=existing_data.get(CONF_NORMALIZE_AUDIO, False)): selector({"boolean": {}}),
+            vol.Optional(
+                "output_format",
+                default=existing_data.get(CONF_OUTPUT_FORMAT, "mp3"),): selector({
+                    "select": {
+                       "options": OUTPUT_FORMATS,
+                       "mode": "dropdown",
+                       "sort": True,
+                    }
+            }),
             vol.Optional(
                 "extra_payload",
                 description={

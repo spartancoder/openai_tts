@@ -1,6 +1,7 @@
 """
 Utility functions for OpenAI TTS integration.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,14 +31,16 @@ def detect_audio_format(audio_data: bytes) -> str:
         audio_data: Raw audio bytes
 
     Returns:
-        "wav" if WAV format, "mp3" otherwise
+        "wav", "flac", or "mp3" based on detected format
     """
     if len(audio_data) < 4:
         return "mp3"
 
-    # WAV files start with "RIFF"
-    if audio_data[:4] == b'RIFF':
+    if audio_data[:4] == b"RIFF":
         return "wav"
+
+    if audio_data[:4] == b"fLaC":
+        return "flac"
 
     return "mp3"
 
@@ -164,7 +167,8 @@ def build_ffmpeg_command(
     input_paths: List[str],
     normalize_audio: bool = False,
     is_concat: bool = False,
-    concat_list_path: Optional[str] = None
+    concat_list_path: Optional[str] = None,
+    output_format: str = "mp3",
 ) -> List[str]:
     """
     Build ffmpeg command for audio processing.
@@ -175,7 +179,8 @@ def build_ffmpeg_command(
         normalize_audio: Whether to apply audio normalization
         is_concat: Whether to use concat demuxer
         concat_list_path: Path to concat list file (only used if is_concat=True)
-        
+        output_format: Output audio format (mp3, flac, wav)
+
     Returns:
         List of command parts for subprocess.run
     """
@@ -200,18 +205,21 @@ def build_ffmpeg_command(
         else:
             # Simple normalization filter for single input
             cmd.extend(["-af", "loudnorm=I=-16:TP=-1:LRA=5"])
-    
-    # Add output parameters (same for all cases)
-    cmd.extend([
-        "-ac", "1",
-        "-ar", "24000",
-        "-b:a", "128k",
-        "-preset", "superfast",
-        "-threads", "4",
-        output_path
-    ])
-    
+
+    # Add output parameters based on format
+    cmd.extend(["-ac", "1", "-ar", "24000"])
+
+    if output_format == "mp3":
+        cmd.extend(["-b:a", "128k"])
+    elif output_format == "flac":
+        cmd.extend(["-acodec", "flac"])
+    elif output_format == "wav":
+        cmd.extend(["-acodec", "pcm_s16le"])
+
+    cmd.extend(["-preset", "superfast", "-threads", "4", output_path])
+
     return cmd
+
 
 async def process_audio(
     hass: HomeAssistant,
@@ -219,7 +227,8 @@ async def process_audio(
     output_path: Optional[str] = None,
     chime_enabled: bool = False,
     chime_path: Optional[str] = None,
-    normalize_audio: bool = False
+    normalize_audio: bool = False,
+    output_format: str = "mp3",
 ) -> Tuple[str, bytes, float]:
     """
     Process audio content with optional chime and normalization.
@@ -231,6 +240,7 @@ async def process_audio(
         chime_enabled: Whether to add chime
         chime_path: Path to chime file (MP3)
         normalize_audio: Whether to normalize audio
+        output_format: Output audio format (mp3, flac, wav)
 
     Returns:
         Tuple of (format, processed_audio, processing_time_ms)
@@ -266,11 +276,13 @@ async def process_audio(
     tts_path = await hass.async_add_executor_job(write_temp_file)
     
     try:
-        # Determine final output path
+        # Determine final output path with correct extension
         final_output_path = output_path
         if not final_output_path:
             def create_temp_output():
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out_file:
+                with tempfile.NamedTemporaryFile(
+                    suffix=f".{output_format}", delete=False
+                ) as out_file:
                     return out_file.name
             final_output_path = await hass.async_add_executor_job(create_temp_output)
         
@@ -281,7 +293,8 @@ async def process_audio(
                 cmd = build_ffmpeg_command(
                     final_output_path,
                     [actual_chime_path, tts_path],
-                    normalize_audio=True
+                    normalize_audio=True,
+                    output_format=output_format,
                 )
             else:
                 # Chime only (using concat demuxer)
@@ -297,7 +310,8 @@ async def process_audio(
                     [actual_chime_path, tts_path],
                     normalize_audio=False,
                     is_concat=True,
-                    concat_list_path=list_path
+                    concat_list_path=list_path,
+                    output_format=output_format,
                 )
         
         elif normalize_audio:
@@ -305,21 +319,23 @@ async def process_audio(
             cmd = build_ffmpeg_command(
                 final_output_path,
                 [tts_path],
-                normalize_audio=True
+                normalize_audio=True,
+                output_format=output_format,
             )
         
         else:
             # No chime or normalization needed
-            if audio_format == "wav":
-                # WAV input needs conversion to MP3 for HA compatibility
-                _LOGGER.debug("Converting WAV to MP3 for Home Assistant compatibility")
+            if audio_format != output_format:
+                # Format conversion needed
+                _LOGGER.debug("Converting %s to %s", audio_format, output_format)
                 cmd = build_ffmpeg_command(
                     final_output_path,
                     [tts_path],
-                    normalize_audio=False
+                    normalize_audio=False,
+                    output_format=output_format,
                 )
             else:
-                # MP3 input, no processing needed - just read the file
+                # Same format, no processing needed - just read the file
                 def read_original():
                     with open(tts_path, "rb") as f:
                         return f.read()
@@ -333,12 +349,12 @@ async def process_audio(
                 await hass.async_add_executor_job(os.remove, tts_path)
 
                 total_time = (time.monotonic() - start_time) * 1000
-                return "mp3", final_audio, total_time
-        
+                return output_format, final_audio, total_time
+
         # Run ffmpeg command
         _LOGGER.debug("Executing ffmpeg command: %s", " ".join(cmd))
         ffmpeg_start_time = time.monotonic()
-        
+
         # When using asyncio.run, we need to simplify execution to avoid event loop conflicts
         # Just run synchronously since this whole function is being wrapped in asyncio.run()
         try:
@@ -377,8 +393,8 @@ async def process_audio(
         await hass.async_add_executor_job(cleanup_files)
         
         total_time = (time.monotonic() - start_time) * 1000
-        return "mp3", final_audio, total_time
-    
+        return output_format, final_audio, total_time
+
     except Exception as e:
         # Clean up in case of error
         def error_cleanup():
@@ -433,8 +449,7 @@ def normalize_entity_ids(entity_ids: Union[str, List[str]]) -> List[str]:
     return entity_ids
 
 async def get_media_player_state(
-    hass: HomeAssistant, 
-    entity_id: str
+    hass: HomeAssistant, entity_id: str
 ) -> Tuple[Optional[StateType], Optional[Dict]]:
     """
     Get media player state and attributes if available.
@@ -472,6 +487,7 @@ def get_speaker_status(state: Optional[str]) -> str:
         return "inactive"
         
     return "active"
+
 
 async def set_media_player_volume(
     hass: HomeAssistant, 
