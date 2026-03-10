@@ -494,11 +494,7 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
             }),
             vol.Optional("normalize_audio", default=False): selector({"boolean": {}}),
             vol.Optional("output_format", default="mp3"): selector({
-                "select": {
-                    "options": OUTPUT_FORMATS,
-                    "mode": "dropdown",
-                    "sort": True,
-                }
+                "select": {"options": ["mp3", "flac", "wav"]}
             }),
             vol.Optional(
                 "extra_payload",
@@ -614,14 +610,8 @@ class OpenAITTSProfileSubentryFlow(ConfigSubentryFlow):
                 "select": {"options": chime_opts}
             }),
             vol.Optional("normalize_audio", default=existing_data.get(CONF_NORMALIZE_AUDIO, False)): selector({"boolean": {}}),
-            vol.Optional(
-                "output_format",
-                default=existing_data.get(CONF_OUTPUT_FORMAT, "mp3"),): selector({
-                    "select": {
-                       "options": OUTPUT_FORMATS,
-                       "mode": "dropdown",
-                       "sort": True,
-                    }
+            vol.Optional("output_format", default=existing_data.get(CONF_OUTPUT_FORMAT, "mp3")): selector({
+                "select": {"options": ["mp3", "flac", "wav"]}
             }),
             vol.Optional(
                 "extra_payload",

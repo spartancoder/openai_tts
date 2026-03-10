@@ -80,7 +80,11 @@ CONF_INSTRUCTIONS = "instructions"
 CONF_EXTRA_PAYLOAD = "extra_payload"  # JSON string for custom TTS backend parameters
 
 CONF_OUTPUT_FORMAT = "output_format"
-OUTPUT_FORMATS = ["mp3", "flac", "wav"]
+OUTPUT_FORMATS = [
+    {"value": "mp3", "label": "MP3"},
+    {"value": "flac", "label": "FLAC"},
+    {"value": "wav", "label": "WAV"},
+]
 
 # Toggle to snapshot & restore volumes
 CONF_VOLUME_RESTORE = "volume_restore"

@@ -79,6 +79,7 @@
             "chime": "Enable chime sound",
             "chime_sound": "Chime sound",
             "normalize_audio": "Normalize audio volume",
+            "output_format": "Audio format",
             "instructions": "Custom instructions (optional, for supported models only)",
             "extra_payload": "Extra JSON payload (optional, for custom TTS backends)"
           }
@@ -93,6 +94,7 @@
             "chime": "Enable chime sound",
             "chime_sound": "Chime sound",
             "normalize_audio": "Normalize audio volume",
+            "output_format": "Audio format",
             "instructions": "Custom instructions (optional, for supported models only)",
             "extra_payload": "Extra JSON payload (optional, for custom TTS backends)"
           }

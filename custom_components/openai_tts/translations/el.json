@@ -56,6 +56,7 @@
             "chime": "Ενεργοποίηση ηχητικού σήματος",
             "chime_sound": "Ήχος σήματος",
             "normalize_audio": "Κανονικοποίηση έντασης ήχου",
+            "output_format": "Μορφή ήχου",
             "instructions": "Προσαρμοσμένες οδηγίες (προαιρετικό, μόνο για υποστηριζόμενα μοντέλα)",
             "extra_payload": "Extra JSON payload (προαιρετικό, για custom TTS backends)"
           }
@@ -70,6 +71,7 @@
             "chime": "Ενεργοποίηση ηχητικού σήματος",
             "chime_sound": "Ήχος σήματος",
             "normalize_audio": "Κανονικοποίηση έντασης ήχου",
+            "output_format": "Μορφή ήχου",
             "instructions": "Προσαρμοσμένες οδηγίες (προαιρετικό, μόνο για υποστηριζόμενα μοντέλα)",
             "extra_payload": "Extra JSON payload (προαιρετικό, για custom TTS backends)"
           }

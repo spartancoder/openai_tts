@@ -56,6 +56,7 @@
             "chime": "Signalton aktivieren",
             "chime_sound": "Signalton-Sound",
             "normalize_audio": "Audiolautstärke normalisieren",
+            "output_format": "Audioformat",
             "instructions": "Benutzerdefinierte Anweisungen (optional, nur für unterstützte Modelle)",
             "extra_payload": "Extra JSON-Payload (optional, für benutzerdefinierte TTS-Backends)"
           }
@@ -70,6 +71,7 @@
             "chime": "Signalton aktivieren",
             "chime_sound": "Signalton-Sound",
             "normalize_audio": "Audiolautstärke normalisieren",
+            "output_format": "Audioformat",
             "instructions": "Benutzerdefinierte Anweisungen (optional, nur für unterstützte Modelle)",
             "extra_payload": "Extra JSON-Payload (optional, für benutzerdefinierte TTS-Backends)"
           }

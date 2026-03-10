@@ -56,6 +56,7 @@
             "chime": "Povolit zvukový signál",
             "chime_sound": "Zvuk signálu",
             "normalize_audio": "Normalizovat hlasitost audia",
+            "output_format": "Formát audia",
             "instructions": "Vlastní pokyny (volitelné, pouze pro podporované modely)",
             "extra_payload": "Extra JSON payload (volitelné, pro vlastní TTS backendy)"
           }
@@ -70,6 +71,7 @@
             "chime": "Povolit zvukový signál",
             "chime_sound": "Zvuk signálu",
             "normalize_audio": "Normalizovat hlasitost audia",
+            "output_format": "Formát audia",
             "instructions": "Vlastní pokyny (volitelné, pouze pro podporované modely)",
             "extra_payload": "Extra JSON payload (volitelné, pro vlastní TTS backendy)"
           }
